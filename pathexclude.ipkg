@@ -1,0 +1,9 @@
+package pathexclude
+version = 0.1.0
+authors = "Matthew Toohey <contact@mtoohey.com>"
+
+depends = contrib
+
+sourcedir = "src"
+main = PathExclude.Main
+executable = px
