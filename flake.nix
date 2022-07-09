@@ -23,10 +23,13 @@
         };
       in
       {
+        # TODO: package the actual program and look into using built-in
+        # functions in the flake to simplify things
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.idris2
-            pkgs.idris2-pkgs.lsp
+            pkgs.idris2.withLibs.contrib
+            pkgs.idris2-pkgs.lsp.withLibs.contrib
+            pkgs.clang-tools
           ];
         };
       });
