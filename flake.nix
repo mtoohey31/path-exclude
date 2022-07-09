@@ -15,22 +15,29 @@
   };
 
   outputs = { self, nixpkgs, utils, idris2-pkgs }:
-    utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs {
-          overlays = [ idris2-pkgs.overlay ];
-          inherit system;
-        };
-      in
-      {
-        # TODO: package the actual program and look into using built-in
-        # functions in the flake to simplify things
-        devShells.default = pkgs.mkShell {
-          packages = [
-            pkgs.idris2.withLibs.contrib
-            pkgs.idris2-pkgs.lsp.withLibs.contrib
-            pkgs.clang-tools
-          ];
-        };
+    utils.lib.eachDefaultSystem
+      (system:
+        let
+          pkgs = import nixpkgs {
+            overlays = [ idris2-pkgs.overlay ];
+            inherit system;
+          };
+          inherit (pkgs.idris2-pkgs._builders) idrisPackage devEnv;
+        in
+        {
+          packages.default = idrisPackage ./. {
+            buildPhase = "make";
+          };
+
+          devShells.default = pkgs.mkShell {
+            packages = [
+              (devEnv self.packages.${system}.default)
+              pkgs.clang-tools
+            ];
+          };
+        }) // {
+      overlays.default = (final: prev: {
+        path-exclude = self.packages.${prev.system}.default;
       });
+    };
 }
