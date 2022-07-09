@@ -173,6 +173,6 @@ main = do
               _ <- case tpE !(tpM $ map removeAll toRm) of
                 Left e => logErr "while removing a temporary directory" $ Just e
                 Right _ => pure ()
-              case ec of
-                0 => exitWith ExitSuccess
-                nz => exitWith $ ExitFailure 1 -- TODO: figure out how to provide proof that nz is non-zero
+              case choose $ ec == 0 of
+                Left _ => exitWith ExitSuccess
+                Right _ => exitWith $ ExitFailure ec
