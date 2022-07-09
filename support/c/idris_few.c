@@ -3,6 +3,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/*
+  NOTE: this forbidden technique of setting the args individually is necessary
+  because Idris2 currently only supports ffi for the types listed here:
+  https://github.com/idris-lang/Idris2/blob/1875f622486249e831850f5598ee30a3114a61c0/docs/source/ffi/ffi.rst#primitive-ffi-types
+*/
+
 int _argc = 0;
 char** _argv = NULL;
 
