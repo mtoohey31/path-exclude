@@ -38,21 +38,18 @@ returnMaybeError = case !returnError of
   Left e => pure $ Left $ Just e
   Right a => pure $ Right a
 
-thing : HasIO io => io Int -> String -> io Int
-thing i a = do
-  i <- i
-  _ <- primIO $ prim__setFewArg i a
-  pure $ i + 1
+setFewArg : HasIO io => io Int -> String -> io Int
+setFewArg i a = do
+  _ <- primIO $ prim__setFewArg !i a
+  pure $ !i + 1
 
 ||| Fork, exec, and wait.
 few : HasIO io => List String -> io (Either (Maybe FileError) Int)
 few cmd = do
-  _ <- foldl thing (pure 0) cmd
+  _ <- foldl setFewArg (pure 0) cmd
   res <- primIO $ prim__few
   if res < 0
-    then case res of
-      -2 => returnMaybeError
-      _ => pure $ Left Nothing
+    then if res == -2 then returnMaybeError else pure $ Left Nothing
     else pure $ Right res
 
 createTmpDirRetrying : HasIO io => String -> Nat -> io (Either FileError String)
@@ -70,35 +67,43 @@ createTmpDirRetrying p Z = do
 createTmpDir : HasIO io => String -> io (Either FileError String)
 createTmpDir p = createTmpDirRetrying p 10000
 
-transposeIO : HasIO io => List (io a) -> io (List a)
-transposeIO (x :: xs) = pure (!x :: !(transposeIO xs))
-transposeIO [] = pure []
+tpM : Monad m => List (m a) -> m (List a)
+tpM (x :: xs) = pure (!x :: !(tpM xs))
+tpM [] = pure []
 
-transposeEither : List (Either a b) -> Either a (List b)
-transposeEither (x :: xs) = case x of
-  Right y => case transposeEither xs of
+tpE : List (Either a b) -> Either a (List b)
+tpE (x :: xs) = case x of
+  Right y => case tpE xs of
     Right ys => Right $ y :: ys
     Left es => Left es
   Left e => Left e
-transposeEither [] = Right []
+tpE [] = Right []
+
+unify : Either a a -> a
+unify e = case e of
+  Left e => e
+  Right e => e
+
+getLefts : List (Either a b) -> List a
+getLefts (x :: xs) = case x of
+  Left y => y :: (getLefts xs)
+  Right _ => getLefts xs
+getLefts [] = []
 
 linkJoin : HasIO io => String -> String -> String -> io (Either FileError ())
 linkJoin src dest name = symlink (src ++ "/" ++ name) (dest ++ "/" ++ name)
 
-sanitizePathPart : HasIO io => String -> List String -> String -> io (Either FileError String)
-sanitizePathPart tmp ex p = case !(listDir p) of
+cleanEntry : HasIO io => String -> List String -> String -> io (Either FileError (Either String String))
+cleanEntry tmp ex p = case !(listDir p) of
   -- if a path section can't be read, leave it untouched
-  Left _ => pure $ Right p
+  Left _ => pure $ Right $ Right p
   Right con => case intersect ex con of
-    [] => pure $ Right p -- then there are no unwanted binaries in this path
+    [] => pure $ Right $ Right p -- then there are no unwanted binaries in this path
     _ => case !(createTmpDir $ tmp ++ "/px-") of
       Left e => pure $ Left e
-      Right tmp => pure $ case transposeEither !(transposeIO $ map (linkJoin p tmp) $ con \\ ex) of
+      Right tmp => pure $ case tpE !(tpM $ map (linkJoin p tmp) $ con \\ ex) of
         Left e => Left e
-        Right _ => Right tmp
-
-removeAll : HasIO io => String -> io (Either FileError ())
-removeAll s = removeFile s
+        Right _ => Right $ Left tmp
 
 ||| Log an error.
 |||
@@ -113,11 +118,30 @@ logErr s e = case e of
     _ <- fPutStrLn stderr $ "px: " ++ s
     pure ()
 
+dieErr : HasIO io => String -> Maybe FileError -> io ()
+dieErr s e = do
+  _ <- logErr s e
+  exitWith $ ExitFailure 1
+
+||| Remove a directory recursively
+removeAll : HasIO io => String -> io (Either FileError ())
+removeAll p = case !(listDir p) of
+  Left e => pure $ Left e
+  Right con => case tpE $ !(tpM $ map removeFile $ map (p ++ "/" ++) con) of
+    Left e => pure $ Left e
+    Right _ => removeFile p
+
+dieErrAndRm : List String -> (HasIO io => String -> Maybe FileError -> io ())
+dieErrAndRm p s e = do
+  _ <- case tpE !(tpM $ map removeAll p) of
+    Left re => logErr "while removing a temporary directory" $ Just re
+    Right _ => pure ()
+  logErr s e
+
 main : IO ()
 main = do
   -- resolve the temporary directory
-  -- TODO: ensure tmp is removed in all cases
-  let tmp = case find isJust !(transposeIO $ map getEnv ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
+  let tmp = case find isJust !(tpM $ map getEnv ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
         Just (Just t) => t
         _ => "/tmp"
   
@@ -133,12 +157,22 @@ main = do
 
   case cmd of
     [] => logErr "no command provided, separate executables from command with `--`" Nothing
-    _ => case transposeEither !(transposeIO $ map (sanitizePathPart tmp ex) path) of
+    _ => case tpE !(tpM $ map (cleanEntry tmp ex) path) of
       Left e => logErr "while preparing new $PATH" $ Just e
-      Right newPath => case !(setEnv "PATH" (concat $ intersperse ":" newPath) True) of
-        False => logErr "failed to set new $PATH" Nothing
-        True => case !(few cmd) of
-          Left e => logErr "failed toe execute command" e
-          Right ec => case ec of
-            0 => exitWith ExitSuccess
-            nz => exitWith $ ExitFailure 1 -- TODO: figure out how to provide proof that nz is non-zero
+      Right items => do
+        let toRm = getLefts items
+        let dieRm = dieErrAndRm toRm
+        let newPath = map unify items
+        case !(setEnv "PATH" (concat $ intersperse ":" newPath) True) of
+          False => dieRm "failed to set new $PATH" Nothing
+          True => case !(few cmd) of
+            Left me => case me of
+              Just e => dieRm "failed to execute command" $ Just e
+              Nothing => dieRm "failed to execute command: unknown error" Nothing
+            Right ec => do
+              _ <- case tpE !(tpM $ map removeAll toRm) of
+                Left e => logErr "while removing a temporary directory" $ Just e
+                Right _ => pure ()
+              case ec of
+                0 => exitWith ExitSuccess
+                nz => exitWith $ ExitFailure 1 -- TODO: figure out how to provide proof that nz is non-zero
