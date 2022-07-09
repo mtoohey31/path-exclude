@@ -43,7 +43,6 @@ int idris2_few() {
     waitpid(pid, &status, 0);
 
     // clean up
-    // TODO: do I free the elements of _argv too?
     free(_argv);
     _argc = 0;
 
