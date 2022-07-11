@@ -36,8 +36,8 @@
             ];
           };
         }) // {
-      overlays.default = (final: prev: {
-        path-exclude = self.packages.${prev.system}.default;
+      overlays.default = (final: _: {
+        path-exclude = self.packages.${final.system}.default;
       });
     };
 }
