@@ -18,7 +18,7 @@ prim__few : PrimIO Int
 %foreign "C:idris2_setFewArg, libidris2_few, idris_few.h"
 prim__setFewArg : Int -> String -> PrimIO Int
 
-||| Make a new name for a file
+||| Make a new name for a file.
 |||
 ||| @ t the target path the link will point to
 ||| @ l the linkpath the link will be created at
@@ -33,11 +33,14 @@ symlink t l = do
 random : HasIO io => io Int
 random = primIO prim__random
 
+||| Return the error indicated by errno as `Left $ Just e` if it exists,
+||| instead of as `Left e` as `returnError` does.
 returnMaybeError : HasIO io => io (Either (Maybe FileError) a)
 returnMaybeError = case !returnError of
   Left e => pure $ Left $ Just e
   Right a => pure $ Right a
 
+||| Set an argument to be used by `few`.
 setFewArg : HasIO io => io Int -> String -> io Int
 setFewArg i a = do
   _ <- primIO $ prim__setFewArg !i a
@@ -52,6 +55,27 @@ few cmd = do
     then if res == -2 then returnMaybeError else pure $ Left Nothing
     else pure $ Right res
 
+||| Transform a list of monad values to a list value of that same monad.
+batchM : Monad m => List (m a) -> m (List a)
+batchM (x :: xs) = pure (!x :: !(batchM xs))
+batchM [] = pure []
+
+||| Transform a list of lazy, fallible monad values to a value of that same
+||| monad containing either the first error that occurred, or the list of
+||| values that were produced if no errors occurred.
+|||
+||| A lazy input type allows us to ensure that no further operations are
+||| performed after the first failure.
+batchFM : Monad m => List (Lazy (m (Either a b))) -> m (Either a (List b))
+batchFM (x :: xs) = case !x of
+  Left e => pure $ Left e
+  Right y => case !(batchFM xs) of
+    Left e => pure $ Left e
+    Right ys => pure $ Right $ y :: ys
+batchFM [] = pure $ Right []
+
+||| Create a temporary directory with the given prefix, retrying the given
+||| amount of times if a failure occurs.
 createTmpDirRetrying : HasIO io => String -> Nat -> io (Either FileError String)
 createTmpDirRetrying p (S k) = do
   let t = p ++ show !random
@@ -64,35 +88,31 @@ createTmpDirRetrying p Z = do
     Left e => pure $ Left e
     Right _ => pure $ Right t
 
+||| Create a temporary directory, retrying the default amount of times.
 createTmpDir : HasIO io => String -> io (Either FileError String)
 createTmpDir p = createTmpDirRetrying p 10000
 
-tpM : Monad m => List (m a) -> m (List a)
-tpM (x :: xs) = pure (!x :: !(tpM xs))
-tpM [] = pure []
-
-tpE : List (Either a b) -> Either a (List b)
-tpE (x :: xs) = case x of
-  Right y => case tpE xs of
-    Right ys => Right $ y :: ys
-    Left es => Left es
-  Left e => Left e
-tpE [] = Right []
-
+||| Transform an either whose left and right sides are of the same type to the
+||| inner value, regardless of its side.
 unify : Either a a -> a
 unify e = case e of
   Left e => e
   Right e => e
 
+||| Get all left elements of a list of either values.
 getLefts : List (Either a b) -> List a
 getLefts (x :: xs) = case x of
   Left y => y :: (getLefts xs)
   Right _ => getLefts xs
 getLefts [] = []
 
-linkJoin : HasIO io => String -> String -> String -> io (Either FileError ())
-linkJoin src dest name = symlink (src ++ "/" ++ name) (dest ++ "/" ++ name)
+||| Create a symlink from `dest ++ "/" ++ name` to `src ++ "/" ++ name`.
+linkJoin : HasIO io => String -> String -> String -> Lazy (io (Either FileError ()))
+linkJoin src dest name = delay $ symlink (src ++ "/" ++ name) (dest ++ "/" ++ name)
 
+||| If a `$PATH` entry contains any of the binaries to be excluded, return the
+||| path of a temporary directory to be used in the entry's place that excludes
+||| the unwanted binaries. Otherwise, return the entry unchanged.
 cleanEntry : HasIO io => String -> List String -> String -> io (Either FileError (Either String String))
 cleanEntry tmp ex p = case !(listDir p) of
   -- if a path section can't be read, leave it untouched
@@ -101,7 +121,7 @@ cleanEntry tmp ex p = case !(listDir p) of
     [] => pure $ Right $ Right p -- then there are no unwanted binaries in this path
     _ => case !(createTmpDir $ tmp ++ "/px-") of
       Left e => pure $ Left e
-      Right tmp => pure $ case tpE !(tpM $ map (linkJoin p tmp) $ con \\ ex) of
+      Right tmp => pure $ case !(batchFM $ map (linkJoin p tmp) $ con \\ ex) of
         Left e => Left e
         Right _ => Right $ Left tmp
 
@@ -118,22 +138,37 @@ logErr s e = case e of
     _ <- fPutStrLn stderr $ "px: " ++ s
     pure ()
 
+||| Remove a directory and all entries inside it.
+|||
+||| Operates non-recursively, because everything in a temporary path directory
+||| that we're removing should be a symlink, so no recursion is necessary even
+||| if there are symlinks to directories.
+removeAll : HasIO io => String -> io (Either FileError ())
+removeAll p = case !(listDir p) of
+  Left e => pure $ Left e
+  Right con => case !(batchFM $ map (delay . removeFile) $ map (p ++ "/" ++) con) of
+    Left e => pure $ Left e
+    Right _ => removeFile p
+
+||| Remove a directory and all entries inside it.
+|||
+||| Operates non-recursively, because everything in a temporary path directory
+||| that we're removing should be a symlink, so no recursion is necessary even
+||| if there are symlinks to directories.
+removeAllL : HasIO io => String -> Lazy (io (Either FileError ()))
+removeAllL p = delay $ removeAll p
+
+||| Log the given error and exit with code 1.
 dieErr : HasIO io => String -> Maybe FileError -> io ()
 dieErr s e = do
   _ <- logErr s e
   exitWith $ ExitFailure 1
 
-||| Remove a directory recursively
-removeAll : HasIO io => String -> io (Either FileError ())
-removeAll p = case !(listDir p) of
-  Left e => pure $ Left e
-  Right con => case tpE $ !(tpM $ map removeFile $ map (p ++ "/" ++) con) of
-    Left e => pure $ Left e
-    Right _ => removeFile p
-
+||| Remove the temporary directories, log the given error, and exit with code
+||| 1.
 dieErrAndRm : List String -> (HasIO io => String -> Maybe FileError -> io ())
 dieErrAndRm p s e = do
-  _ <- case tpE !(tpM $ map removeAll p) of
+  _ <- case !(batchFM $ map removeAllL p) of
     Left re => logErr "while removing a temporary directory" $ Just re
     Right _ => pure ()
   logErr s e
@@ -141,7 +176,7 @@ dieErrAndRm p s e = do
 main : IO ()
 main = do
   -- resolve the temporary directory
-  let tmp = case find isJust !(tpM $ map getEnv ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
+  let tmp = case find isJust !(batchM $ map getEnv ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
         Just (Just t) => t
         _ => "/tmp"
   
@@ -157,7 +192,7 @@ main = do
 
   case cmd of
     [] => logErr "no command provided, separate executables from command with `--`" Nothing
-    _ => case tpE !(tpM $ map (cleanEntry tmp ex) path) of
+    _ => case !(batchFM $ map (delay . (cleanEntry tmp ex)) path) of
       Left e => logErr "while preparing new $PATH" $ Just e
       Right items => do
         let toRm = getLefts items
@@ -170,7 +205,7 @@ main = do
               Just e => dieRm "failed to execute command" $ Just e
               Nothing => dieRm "failed to execute command: unknown error" Nothing
             Right ec => do
-              _ <- case tpE !(tpM $ map removeAll toRm) of
+              _ <- case !(batchFM $ map removeAllL toRm) of
                 Left e => logErr "while removing a temporary directory" $ Just e
                 Right _ => pure ()
               case choose $ ec == 0 of
