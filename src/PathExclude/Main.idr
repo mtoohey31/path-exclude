@@ -107,8 +107,8 @@ getLefts (x :: xs) = case x of
 getLefts [] = []
 
 ||| Create a symlink from `dest ++ "/" ++ name` to `src ++ "/" ++ name`.
-linkJoin : HasIO io => String -> String -> String -> Lazy (io (Either FileError ()))
-linkJoin src dest name = delay $ symlink (src ++ "/" ++ name) (dest ++ "/" ++ name)
+linkJoin : HasIO io => String -> String -> String -> io (Either FileError ())
+linkJoin src dest name = symlink (src ++ "/" ++ name) (dest ++ "/" ++ name)
 
 ||| If a `$PATH` entry contains any of the binaries to be excluded, return the
 ||| path of a temporary directory to be used in the entry's place that excludes
@@ -121,7 +121,7 @@ cleanEntry tmp ex p = case !(listDir p) of
     [] => pure $ Right $ Right p -- then there are no unwanted binaries in this path
     _ => case !(createTmpDir $ tmp ++ "/px-") of
       Left e => pure $ Left e
-      Right tmp => pure $ case !(batchFM $ map (linkJoin p tmp) $ con \\ ex) of
+      Right tmp => pure $ case !(batchFM $ map (delay . (linkJoin p tmp)) $ con \\ ex) of
         Left e => Left e
         Right _ => Right $ Left tmp
 
@@ -150,14 +150,6 @@ removeAll p = case !(listDir p) of
     Left e => pure $ Left e
     Right _ => removeFile p
 
-||| Remove a directory and all entries inside it.
-|||
-||| Operates non-recursively, because everything in a temporary path directory
-||| that we're removing should be a symlink, so no recursion is necessary even
-||| if there are symlinks to directories.
-removeAllL : HasIO io => String -> Lazy (io (Either FileError ()))
-removeAllL p = delay $ removeAll p
-
 ||| Log the given error and exit with code 1.
 dieErr : HasIO io => String -> Maybe FileError -> io ()
 dieErr s e = do
@@ -168,7 +160,7 @@ dieErr s e = do
 ||| 1.
 dieErrAndRm : List String -> (HasIO io => String -> Maybe FileError -> io ())
 dieErrAndRm p s e = do
-  _ <- case !(batchFM $ map removeAllL p) of
+  _ <- case !(batchFM $ map (delay . removeAll) p) of
     Left re => logErr "while removing a temporary directory" $ Just re
     Right _ => pure ()
   logErr s e
@@ -205,7 +197,7 @@ main = do
               Just e => dieRm "failed to execute command" $ Just e
               Nothing => dieRm "failed to execute command: unknown error" Nothing
             Right ec => do
-              _ <- case !(batchFM $ map removeAllL toRm) of
+              _ <- case !(batchFM $ map (delay . removeAll) toRm) of
                 Left e => logErr "while removing a temporary directory" $ Just e
                 Right _ => pure ()
               case choose $ ec == 0 of
