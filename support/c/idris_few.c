@@ -10,17 +10,20 @@
 */
 
 int _argc = 0;
+// initialized to NULL so the first free is safe
 char** _argv = NULL;
 
 void idris2_setFewArg(int n, char* argn) {
   if (n >= _argc) {
-    char **new_argv = malloc(sizeof(char*) * n);
+    char **new_argv = malloc(sizeof(char*) * (n + 2));
     for (int i = 0; i < _argc; i ++) {
       new_argv[i] = _argv[i];
     }
     free(_argv);
     _argv = new_argv;
     _argc = n + 1;
+    // terminate with sentinel
+    _argv[_argc] = (char*) 0;
   }
   _argv[n] = argn;
 }
