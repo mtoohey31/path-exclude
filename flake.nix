@@ -24,7 +24,12 @@
           };
           inherit (pkgs.idris2-pkgs._builders) idrisPackage devEnv;
         in
-        {
+        rec {
+          apps.default = utils.lib.mkApp {
+            drv = packages.default;
+            name = "px";
+          };
+
           packages.default = idrisPackage ./. {
             buildPhase = "make";
           };
