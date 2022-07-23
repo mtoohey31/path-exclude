@@ -9,22 +9,16 @@
   https://github.com/idris-lang/Idris2/blob/1875f622486249e831850f5598ee30a3114a61c0/docs/source/ffi/ffi.rst#primitive-ffi-types
 */
 
-int _argc = 0;
-// initialized to NULL so the first free is safe
-char** _argv = NULL;
+int _argc;
+char** _argv;
 
-void idris2_setFewArg(int n, char* argn) {
-  if (n >= _argc) {
-    char **new_argv = malloc(sizeof(char*) * (n + 2));
-    for (int i = 0; i < _argc; i ++) {
-      new_argv[i] = _argv[i];
-    }
-    free(_argv);
-    _argv = new_argv;
-    _argc = n + 1;
-    // terminate with sentinel
-    _argv[_argc] = (char*) 0;
-  }
+void idris2_setFewArgc(int argc) {
+  _argc = argc;
+  _argv = malloc(sizeof(char*) * (argc + 1));
+  _argv[_argc] = (char*) 0;
+}
+
+void idris2_setFewArgn(int n, char* argn) {
   _argv[n] = argn;
 }
 

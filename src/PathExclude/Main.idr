@@ -13,10 +13,12 @@ import System.Random
 prim__symlink : String -> String -> PrimIO Int
 %foreign "C:rand,libc 6"
 prim__random : PrimIO Int
+%foreign "C:idris2_setFewArgc, libidris2_few, idris_few.h"
+prim__setFewArgc : Int -> PrimIO Int
+%foreign "C:idris2_setFewArgn, libidris2_few, idris_few.h"
+prim__setFewArgn : Int -> String -> PrimIO Int
 %foreign "C:idris2_few, libidris2_few, idris_few.h"
 prim__few : PrimIO Int
-%foreign "C:idris2_setFewArg, libidris2_few, idris_few.h"
-prim__setFewArg : Int -> String -> PrimIO Int
 
 ||| Make a new name for a file.
 |||
@@ -41,15 +43,16 @@ returnMaybeError = case !returnError of
   Right a => pure $ Right a
 
 ||| Set an argument to be used by `few`.
-setFewArg : HasIO io => io Int -> String -> io Int
-setFewArg i a = do
-  _ <- primIO $ prim__setFewArg !i a
+setFewArgn : HasIO io => io Int -> String -> io Int
+setFewArgn i a = do
+  _ <- primIO $ prim__setFewArgn !i a
   pure $ !i + 1
 
 ||| Fork, exec, and wait.
 few : HasIO io => List String -> io (Either (Maybe FileError) Int)
 few cmd = do
-  _ <- foldl setFewArg (pure 0) cmd
+  _ <- primIO $ prim__setFewArgc $ cast $ length cmd
+  _ <- foldl setFewArgn (pure 0) cmd
   res <- primIO $ prim__few
   if res < 0
     then if res == -2 then returnMaybeError else pure $ Left Nothing
