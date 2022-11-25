@@ -63,6 +63,18 @@ batchM : Monad m => List (m a) -> m (List a)
 batchM (x :: xs) = pure (!x :: !(batchM xs))
 batchM [] = pure []
 
+||| Transform a list of lazy, maybe monad values to a value of that same
+||| monad the first just value that was produced occurred, or nothing if no
+||| values were produced.
+|||
+||| A lazy input type allows us to ensure that no further operations are
+||| performed after the first success.
+batchOM : Monad m => List (Lazy (m (Maybe a))) -> m (Maybe a)
+batchOM (x :: xs) = case !x of
+  Just j => pure $ Just j
+  Nothing => batchOM xs
+batchOM [] = pure Nothing
+
 ||| Transform a list of lazy, fallible monad values to a value of that same
 ||| monad containing either the first error that occurred, or the list of
 ||| values that were produced if no errors occurred.
@@ -171,8 +183,8 @@ dieErrAndRm p s e = do
 main : IO ()
 main = do
   -- resolve the temporary directory
-  let tmp = case find isJust !(batchM $ map getEnv ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
-        Just (Just t) => t
+  let tmp = case !(batchOM $ map (delay . getEnv) ["TMP", "TEMP", "TMPDIR", "TEMPDIR"]) of
+        Just t => t
         _ => "/tmp"
   
   -- fetch the sections of $PATH
