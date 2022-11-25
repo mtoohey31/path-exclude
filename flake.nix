@@ -4,45 +4,24 @@
   inputs = {
     nixpkgs.url = "nixpkgs/nixpkgs-unstable";
     utils.url = "github:numtide/flake-utils";
-    idris2-pkgs = {
-      url = "github:claymager/idris2-pkgs";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "utils";
-        idris-server.follows = "";
-      };
-    };
   };
 
-  outputs = { self, nixpkgs, utils, idris2-pkgs }:
-    utils.lib.eachDefaultSystem
-      (system:
-        let
-          pkgs = import nixpkgs {
-            overlays = [ idris2-pkgs.overlay ];
-            inherit system;
-          };
-          inherit (pkgs.idris2-pkgs._builders) idrisPackage devEnv;
-        in
-        rec {
-          apps.default = utils.lib.mkApp {
-            drv = packages.default;
-            name = "px";
-          };
-
-          packages.default = idrisPackage ./. {
-            buildPhase = "make";
-          };
-
-          devShells.default = pkgs.mkShell {
-            packages = [
-              (devEnv self.packages.${system}.default)
-              pkgs.clang-tools
-            ];
-          };
-        }) // {
-      overlays.default = (final: _: {
-        path-exclude = self.packages.${final.system}.default;
-      });
+  outputs = { self, nixpkgs, utils }: {
+    overlays.default = final: prev: {
+      path-exclude = final.stdenv.mkDerivation {
+        pname = "path-exclude";
+        version = "0.1.0";
+        nativeBuildInputs = [ final.idris2 ];
+        src = ./.;
+        makeFlags = [ "PREFIX=$(out)" ];
+        meta.platforms = final.idris2.meta.platforms;
+      };
     };
+  } // utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
+    with import nixpkgs
+      { overlays = [ self.overlays.default ]; inherit system; }; {
+      packages.default = path-exclude;
+
+      devShells.default = mkShell { packages = [ idris2 ]; };
+    });
 }
