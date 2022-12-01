@@ -1,23 +1,21 @@
 module PathExclude.Main
 
-import Data.Fin
-import Data.IOArray
-import Data.List
 import Data.List1
 import Data.String
 import System
 import System.Directory
-import System.Random
 
-%foreign "C:symlink,libc 6"
+%foreign "C:symlink,libc,unistd.h"
 prim__symlink : String -> String -> PrimIO Int
-%foreign "C:rand,libc 6"
+%foreign "C:setenv,libc,stdlib.h"
+prim__setenv : String -> String -> Int -> PrimIO Int
+%foreign "C:rand,libc,stdlib.h"
 prim__random : PrimIO Int
-%foreign "C:idris2_setFewArgc, libidris2_few, idris_few.h"
-prim__setFewArgc : Int -> PrimIO Int
-%foreign "C:idris2_setFewArgn, libidris2_few, idris_few.h"
-prim__setFewArgn : Int -> String -> PrimIO Int
-%foreign "C:idris2_few, libidris2_few, idris_few.h"
+%foreign "C:idris2_setFewArgc,libidris2_few,idris_few.h"
+prim__setFewArgc : Int -> PrimIO ()
+%foreign "C:idris2_setFewArgn,libidris2_few,idris_few.h"
+prim__setFewArgn : Int -> String -> PrimIO ()
+%foreign "C:idris2_few,libidris2_few,idris_few.h"
 prim__few : PrimIO Int
 
 ||| Make a new name for a file.
@@ -27,6 +25,17 @@ prim__few : PrimIO Int
 symlink : HasIO io => (t : String) -> (l : String) -> io (Either FileError ())
 symlink t l = do
   res <- primIO $ prim__symlink t l
+  if res == 0
+    then pure $ Right ()
+    else returnError
+
+||| Set the specified environment variable.
+|||
+||| @ var the name of the environment variable to set
+||| @ val the value to set the variable to
+setEnv' : HasIO io => (var : String) -> (val : String) -> io (Either FileError ())
+setEnv' var val = do
+  res <- primIO $ prim__setenv var val 1
   if res == 0
     then pure $ Right ()
     else returnError
@@ -205,9 +214,9 @@ main = do
         let toRm = getLefts items
         let dieRm = dieErrAndRm toRm
         let newPath = map unify items
-        case !(setEnv "PATH" (concat $ intersperse ":" newPath) True) of
-          False => dieRm "failed to set new $PATH" Nothing
-          True => case !(few cmd) of
+        case !(setEnv' "PATH" (concat $ intersperse ":" newPath)) of
+          Left e => dieRm "failed to set new $PATH" $ Just e
+          Right () => case !(few cmd) of
             Left me => case me of
               Just e => dieRm "failed to execute command" $ Just e
               Nothing => dieRm "failed to execute command: unknown error" Nothing

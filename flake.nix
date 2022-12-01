@@ -11,7 +11,7 @@
       path-exclude = final.stdenv.mkDerivation {
         pname = "path-exclude";
         version = "0.1.0";
-        nativeBuildInputs = [ final.idris2 ];
+        nativeBuildInputs = with final; [ gmp idris2 makeWrapper ];
         src = ./.;
         makeFlags = [ "PREFIX=$(out)" ];
         meta.platforms = final.idris2.meta.platforms;
@@ -22,6 +22,8 @@
       { overlays = [ self.overlays.default ]; inherit system; }; {
       packages.default = path-exclude;
 
-      devShells.default = mkShell { packages = [ idris2 ]; };
+      devShells.default = mkShell {
+        packages = [ gmp idris2 ];
+      };
     });
 }
