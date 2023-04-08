@@ -15,11 +15,14 @@
         src = ./.;
         makeFlags = [ "PREFIX=$(out)" ];
         meta.platforms = final.idris2.meta.platforms;
+        passthru.exePath = "/bin/px";
       };
     };
   } // utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ] (system:
     with import nixpkgs
       { overlays = [ self.overlays.default ]; inherit system; }; {
+      apps.default = utils.lib.mkApp { drv = path-exclude; };
+
       packages.default = path-exclude;
 
       devShells.default = mkShell {
