@@ -207,7 +207,9 @@ main = do
   let cmd = drop 1 cmd -- drop the "--"
 
   case cmd of
-    [] => logErr "no command provided, separate executables from command with `--`" Nothing
+    [] => do
+      _ <- fPutStrLn stderr "Usage: px [EXCLUDE_NAME...] -- <EXECUTE_NAME> [ARG...]"
+      exitWith $ ExitFailure 1
     _ => case !(batchFM $ map (delay . (cleanEntry tmp ex)) path) of
       Left e => logErr "while preparing new $PATH" $ Just e
       Right items => do
